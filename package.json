@@ -9,13 +9,17 @@
       "@specodec/typespec-specodec-rust": {
         "type": "object",
         "properties": {
-          "emitter-output-dir": { "type": "string" }
+          "emitter-output-dir": { "type": "string" },
+          "ignore-reserved-keywords": { "type": "boolean" }
         },
         "required": ["emitter-output-dir"]
       }
     }
   },
   "scripts": { "build": "tsc", "prepare": "npm run build" },
+  "dependencies": {
+    "@specodec/typespec-specodec-core": "file:/tmp/specodec-typespec-specodec-core-0.0.1.tgz"
+  },
   "devDependencies": {
     "@typespec/compiler": "1.11.0",
     "@typespec/http": "1.11.0",
