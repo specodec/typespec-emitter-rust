@@ -2,7 +2,7 @@
   "name": "@specodec/typespec-specodec-rust",
   "version": "0.0.1",
   "type": "module",
-  "main": "dist/src/index.js",
+  "main": "dist/index.js",
   "typespec": {
     "emitter": true,
     "options": {
