@@ -1,24 +1,33 @@
 {
-  "name": "@specodec/typespec-specodec-rust",
+  "name": "@specodec/typespec-emitter-rust",
   "version": "0.0.1",
   "type": "module",
   "main": "dist/index.js",
   "typespec": {
     "emitter": true,
     "options": {
-      "@specodec/typespec-specodec-rust": {
+      "@specodec/typespec-emitter-rust": {
         "type": "object",
         "properties": {
-          "emitter-output-dir": { "type": "string" },
-          "ignore-reserved-keywords": { "type": "boolean" }
+          "emitter-output-dir": {
+            "type": "string"
+          },
+          "ignore-reserved-keywords": {
+            "type": "boolean"
+          }
         },
-        "required": ["emitter-output-dir"]
+        "required": [
+          "emitter-output-dir"
+        ]
       }
     }
   },
-  "scripts": { "build": "tsc", "prepare": "npm run build" },
+  "scripts": {
+    "build": "tsc",
+    "prepare": "npm run build"
+  },
   "dependencies": {
-    "@specodec/typespec-specodec-core": "file:/tmp/specodec-typespec-specodec-core-0.0.1.tgz"
+    "@specodec/typespec-emitter-core": "^0.0.1"
   },
   "devDependencies": {
     "@typespec/compiler": "1.11.0",

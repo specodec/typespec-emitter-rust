@@ -1,11 +1,12 @@
 import {
-  EmitContext, emitFile, listServices, getNamespaceFullName, navigateTypesInNamespace,
+  EmitContext, emitFile, listServices, navigateTypesInNamespace,
   Model, Namespace, Interface, Program, Type, Scalar, Diagnostic,
 } from "@typespec/compiler";
 import {
   checkReservedKeyword,
   formatReservedError,
-} from "@specodec/typespec-specodec-core";
+  isSpecodecModel,
+} from "@specodec/typespec-emitter-core";
 
 export type EmitterOptions = { "emitter-output-dir": string; "ignore-reserved-keywords"?: boolean };
 
@@ -187,18 +188,12 @@ function countRequiredFields(fields: FieldInfo[]): number {
   return fields.filter(f => !f.optional).length;
 }
 
-function isStdLibNamespace(ns: Namespace): boolean {
-  const fullName = getNamespaceFullName(ns);
-  return fullName === "TypeSpec" || fullName.startsWith("TypeSpec.");
-}
-
 function collectServices(program: Program): ServiceInfo[] {
   const services = listServices(program);
   const result: ServiceInfo[] = [];
   function collectFromNs(ns: Namespace, iface?: Interface) {
-    if (isStdLibNamespace(ns)) return;
     const models: Model[] = []; const seen = new Set<string>();
-    navigateTypesInNamespace(ns, { model: (m: Model) => { if (m.name && !seen.has(m.name)) { const modelNs = m.namespace; if (modelNs && !isStdLibNamespace(modelNs)) { models.push(m); seen.add(m.name); } } } });
+    navigateTypesInNamespace(ns, { model: (m: Model) => { if (m.name && !seen.has(m.name) && isSpecodecModel(program, m)) { models.push(m); seen.add(m.name); } } });
     if (models.length > 0) {
       result.push({ 
         namespace: ns, 
@@ -329,7 +324,8 @@ export async function $onEmit(context: EmitContext<EmitterOptions>) {
       lines.push(`}`);
       lines.push("");
 
-      lines.push(`pub static ${screaming}_CODEC: SpecCodec<${m.name}> = SpecCodec {`);
+      lines.push(`#[allow(non_upper_case_globals)]`);
+      lines.push(`pub static ${m.name}Codec: SpecCodec<${m.name}> = SpecCodec {`);
       lines.push(`    encode: ${snake}_write,`);
       lines.push(`    decode: ${snake}_decode,`);
       lines.push(`};`);
