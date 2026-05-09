@@ -1,6 +1,6 @@
 {
   "name": "@specodec/typespec-emitter-rust",
-  "version": "0.1.4",
+  "version": "0.1.18",
   "type": "module",
   "main": "dist/index.js",
   "typespec": {
@@ -27,11 +27,14 @@
     "prepare": "npm run build"
   },
   "dependencies": {
-    "@specodec/typespec-emitter-core": "^0.1.1"
+    "@specodec/typespec-emitter-core": "^0.1.9"
   },
   "devDependencies": {
     "@typespec/compiler": "1.11.0",
     "@typespec/http": "1.11.0",
     "typescript": "^5.8.0"
+  },
+  "publishConfig": {
+    "registry": "http://10.199.64.20:3000/api/packages/specodec/npm/"
   }
 }

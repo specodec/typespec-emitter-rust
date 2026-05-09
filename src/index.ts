@@ -1,28 +1,35 @@
-import {
-  EmitContext,
-  emitFile,
-  Model,
-  Type,
-} from "@typespec/compiler";
+import { type EmitContext, emitFile, type Enum, type Model, type Type } from "@typespec/compiler";
 import {
   collectServices,
-  ServiceInfo,
-  BaseEmitterOptions,
-  FieldInfo,
+  type BaseEmitterOptions,
+  type EnumInfo,
+  type EnumMemberInfo,
+  type UnionInfo,
+  type UnionVariantInfo,
   extractFields,
   scalarName,
   isArrayType,
   isRecordType,
   isModelType,
+  isUnionType,
+  isScalarVariant,
   arrayElementType,
   recordElementType,
   toSnakeCase,
-  toScreamingSnakeCase,
   dottedPathToSnakeCase,
   checkAndReportReservedKeywords,
+  safeFieldName,
 } from "@specodec/typespec-emitter-core";
 
 export type EmitterOptions = BaseEmitterOptions;
+
+function scalarDefault(t: Type): string {
+  const n = scalarName(t);
+  if (n === "string") return 'String::new()';
+  if (n === "boolean") return "false";
+  if (n === "bytes") return "Vec::new()";
+  return "0";
+}
 
 function typeToRust(t: Type): string {
   const n = scalarName(t);
@@ -39,9 +46,11 @@ function typeToRust(t: Type): string {
   if (n === "float32") return "f32";
   if (n === "float64" || n === "float" || n === "decimal") return "f64";
   if (n === "bytes") return "Vec<u8>";
+  if (t.kind === "Enum") return "String";
   if (isArrayType(t)) return `Vec<${typeToRust(arrayElementType(t))}>`;
   if (isRecordType(t)) return `std::collections::HashMap<String, ${typeToRust(recordElementType(t))}>`;
   if (t.kind === "Model" && (t as Model).name) return (t as Model).name;
+  if (t.kind === "Union" && (t as any).name) return (t as any).name;
   return "String";
 }
 
@@ -51,10 +60,12 @@ function defaultFor(t: Type): string {
   if (n === "boolean") return "false";
   if (n === "float32" || n === "float64" || n === "float" || n === "decimal") return "0.0";
   if (n === "bytes") return "Vec::new()";
-  if (["int8","int16","int32","int64","uint8","uint16","uint32","uint64","integer"].includes(n)) return "0";
+  if (["int8", "int16", "int32", "int64", "uint8", "uint16", "uint32", "uint64", "integer"].includes(n)) return "0";
+  if (t.kind === "Enum") return "String::new()";
   if (isArrayType(t)) return "Vec::new()";
   if (isRecordType(t)) return "std::collections::HashMap::new()";
   if (isModelType(t)) return `${(t as Model).name} { ..Default::default() }`;
+  if (isUnionType(t)) return `${(t as any).name}::${(t as any).name}Undefined(SpecUndefined)`;
   return "String::new()";
 }
 
@@ -104,27 +115,58 @@ function writeExpr(t: Type, expr: string): string {
     return `w.begin_object(${lenExpr}.len()); for (key, val) in ${expr} { w.write_field(key); ${writeExpr(elem, "val")} }; w.end_object()`;
   }
   if (t.kind === "Model" && (t as Model).name) return `${toSnakeCase((t as Model).name)}_write(${expr}, w)`;
+  if (t.kind === "Enum") return `w.write_string(${expr})`;
+  if (t.kind === "Union" && (t as any).name) return `${toSnakeCase((t as any).name)}_write(${expr}, w)`;
   return `w.write_string(${expr})`;
 }
 
 function readExpr(t: Type, optional?: boolean, boxed?: boolean): string {
-  const wrapBox = (expr: string) => boxed ? `Box::new(${expr})` : expr;
+  const wrapBox = (expr: string) => (boxed ? `Box::new(${expr})` : expr);
   const n = scalarName(t);
   let expr: string;
   switch (n) {
-    case "string": expr = "r.read_string()?"; break;
-    case "boolean": expr = "r.read_bool()?"; break;
-    case "int8": expr = "r.read_int32()? as i8"; break;
-    case "int16": expr = "r.read_int32()? as i16"; break;
-    case "int32": case "integer": expr = "r.read_int32()?"; break;
-    case "int64": expr = "r.read_int64()?"; break;
-    case "uint8": expr = "r.read_uint32()? as u8"; break;
-    case "uint16": expr = "r.read_uint32()? as u16"; break;
-    case "uint32": expr = "r.read_uint32()?"; break;
-    case "uint64": expr = "r.read_uint64()?"; break;
-    case "float32": expr = "r.read_float32()?"; break;
-    case "float64": case "float": case "decimal": expr = "r.read_float64()?"; break;
-    case "bytes": expr = "r.read_bytes()?"; break;
+    case "string":
+      expr = "r.read_string()?";
+      break;
+    case "boolean":
+      expr = "r.read_bool()?";
+      break;
+    case "int8":
+      expr = "r.read_int32()? as i8";
+      break;
+    case "int16":
+      expr = "r.read_int32()? as i16";
+      break;
+    case "int32":
+    case "integer":
+      expr = "r.read_int32()?";
+      break;
+    case "int64":
+      expr = "r.read_int64()?";
+      break;
+    case "uint8":
+      expr = "r.read_uint32()? as u8";
+      break;
+    case "uint16":
+      expr = "r.read_uint32()? as u16";
+      break;
+    case "uint32":
+      expr = "r.read_uint32()?";
+      break;
+    case "uint64":
+      expr = "r.read_uint64()?";
+      break;
+    case "float32":
+      expr = "r.read_float32()?";
+      break;
+    case "float64":
+    case "float":
+    case "decimal":
+      expr = "r.read_float64()?";
+      break;
+    case "bytes":
+      expr = "r.read_bytes()?";
+      break;
     default:
       if (isArrayType(t)) {
         const elem = arrayElementType(t);
@@ -146,10 +188,104 @@ function readExpr(t: Type, optional?: boolean, boxed?: boolean): string {
         if (optional) return `if r.is_null()? { r.read_null()?; None } else { Some(${boxedCall}) }`;
         return boxedCall;
       }
-      expr = "r.read_string()?"; break;
+      if (t.kind === "Union" && (t as any).name) {
+        const decodeCall = `${toSnakeCase((t as any).name)}_decode(r)?`;
+        const boxedCall = wrapBox(decodeCall);
+        if (optional) return `if r.is_null()? { r.read_null()?; None } else { Some(${boxedCall}) }`;
+        return boxedCall;
+      }
+  if (t.kind === "Enum") {
+    if (optional) return "Some(r.read_string()?)";
+    return "r.read_string()?";
+  }
+      expr = "r.read_string()?";
+      break;
   }
   if (optional) return `Some(${expr})`;
   return expr;
+}
+
+function generateEnumCode(e: EnumInfo): string[] {
+  const lines: string[] = [];
+  lines.push(`#[derive(Debug, Clone, Copy, PartialEq, Eq)]`);
+  lines.push(`#[repr(i32)]`);
+  lines.push(`pub enum ${e.name} {`);
+  for (const m of e.members) {
+    lines.push(`    ${m.name} = ${m.value},`);
+  }
+  lines.push(`}`);
+  lines.push("");
+  lines.push(`impl Default for ${e.name} {`);
+  lines.push(`    fn default() -> Self { Self::from(0) }`);
+  lines.push(`}`);
+  lines.push("");
+  lines.push(`impl From<i32> for ${e.name} {`);
+  lines.push(`    fn from(v: i32) -> Self {`);
+  lines.push(`        unsafe { std::mem::transmute(v) }`);
+  lines.push(`    }`);
+  lines.push(`}`);
+  return lines;
+}
+
+function generateUnionCode(u: UnionInfo): string[] {
+  const lines: string[] = [];
+  const snakeName = toSnakeCase(u.name);
+
+  const variantName = (v: UnionVariantInfo) => `${u.name}${v.name.charAt(0).toUpperCase() + v.name.slice(1)}`;
+
+  lines.push(`#[derive(Debug, Clone)]`);
+  lines.push(`pub enum ${u.name} {`);
+  for (const v of u.variants) {
+    const rt = typeToRust(v.type);
+    lines.push(`    ${variantName(v)}(${rt}),`);
+  }
+  lines.push(`    ${u.name}Undefined(SpecUndefined),`);
+  lines.push(`}`);
+  lines.push("");
+
+  lines.push(`impl Default for ${u.name} {`);
+  lines.push(`    fn default() -> Self { Self::${u.name}Undefined(SpecUndefined) }`);
+  lines.push(`}`);
+  lines.push("");
+
+  lines.push(`pub fn ${snakeName}_write(obj: &${u.name}, w: &mut dyn SpecWriter) {`);
+  lines.push(`    w.begin_object(1);`);
+  lines.push(`    match obj {`);
+  for (const v of u.variants) {
+    const vName = variantName(v);
+    lines.push(`        ${u.name}::${vName}(inner) => { w.write_field("${v.name}"); ${writeExpr(v.type, "inner")}; }`);
+  }
+  lines.push(`        ${u.name}::${u.name}Undefined(_) => panic!("cannot encode Undefined for ${u.name}"),`);
+  lines.push(`    }`);
+  lines.push(`    w.end_object();`);
+  lines.push(`}`);
+  lines.push("");
+
+  lines.push(`pub fn ${snakeName}_decode(r: &mut dyn SpecReader) -> Result<${u.name}, SCodecError> {`);
+  lines.push(`    r.begin_object()?;`);
+  lines.push(`    if !r.has_next_field()? { return Err(SCodecError::new(format!("empty union ${u.name}"))); }`);
+  lines.push(`    let field = r.read_field_name()?;`);
+  lines.push(`    let result = match field.as_str() {`);
+  for (const v of u.variants) {
+    const vName = variantName(v);
+    lines.push(`        "${v.name}" => ${u.name}::${vName}(${readExpr(v.type, false, false)}),`);
+  }
+  lines.push(`        _ => return Err(SCodecError::new(format!("unknown variant {} for union ${u.name}", field))),`);
+  lines.push(`    };`);
+  lines.push(`    while r.has_next_field()? { r.skip()?; }`);
+  lines.push(`    r.end_object()?;`);
+  lines.push(`    Ok(result)`);
+  lines.push(`}`);
+  lines.push("");
+
+  lines.push(`#[allow(non_upper_case_globals)]`);
+  lines.push(`pub static ${u.name}Codec: SpecCodec<${u.name}> = SpecCodec {`);
+  lines.push(`    encode: ${snakeName}_write,`);
+  lines.push(`    decode: ${snakeName}_decode,`);
+  lines.push(`};`);
+  lines.push("");
+
+  return lines;
 }
 
 export async function $onEmit(context: EmitContext<EmitterOptions>) {
@@ -163,19 +299,20 @@ export async function $onEmit(context: EmitContext<EmitterOptions>) {
   for (const svc of services) {
     const lines: string[] = [];
     lines.push("// Generated by @specodec/typespec-emitter-rust. DO NOT EDIT.");
-    lines.push("use specodec::{SpecWriter, SpecReader, SpecCodec, SCodecError};");
+    lines.push("use specodec::{SpecWriter, SpecReader, SpecCodec, SCodecError, SpecUndefined};");
+    lines.push("use super::*;");
     lines.push("");
 
     for (const m of svc.models) {
       if (!m.name) continue;
       const fields = extractFields(m);
       const snakeName = toSnakeCase(m.name);
-      const reqCount = fields.filter(f => !f.optional).length;
+      const reqCount = fields.filter((f) => !f.optional).length;
 
       lines.push(`#[derive(Debug, Clone, Default)]`);
       lines.push(`pub struct ${m.name} {`);
       for (const f of fields) {
-        const fSnake = toSnakeCase(f.name);
+        const fSnake = safeFieldName("rust", toSnakeCase(f.name));
         lines.push(`    pub ${fSnake}: ${typeToRustField(f.type, f.optional, m.name)},`);
       }
       lines.push(`}`);
@@ -183,15 +320,17 @@ export async function $onEmit(context: EmitContext<EmitterOptions>) {
 
       lines.push(`pub fn ${snakeName}_write(obj: &${m.name}, w: &mut dyn SpecWriter) {`);
       lines.push(`    let mut field_count: usize = ${reqCount};`);
-      for (const f of fields.filter(f => f.optional)) {
-        const fSnake = toSnakeCase(f.name);
+      for (const f of fields.filter((f) => f.optional)) {
+        const fSnake = safeFieldName("rust", toSnakeCase(f.name));
         lines.push(`    if obj.${fSnake}.is_some() { field_count += 1; }`);
       }
       lines.push(`    w.begin_object(field_count);`);
       for (const f of fields) {
-        const fSnake = toSnakeCase(f.name);
+        const fSnake = safeFieldName("rust", toSnakeCase(f.name));
         if (f.optional) {
-          lines.push(`    if let Some(ref _v) = obj.${fSnake} { w.write_field("${f.name}"); ${writeExpr(f.type, "_v")}; }`);
+          lines.push(
+            `    if let Some(ref _v) = obj.${fSnake} { w.write_field("${f.name}"); ${writeExpr(f.type, "_v")}; }`,
+          );
         } else {
           lines.push(`    w.write_field("${f.name}"); ${writeExpr(f.type, `&obj.${fSnake}`)};`);
         }
@@ -202,7 +341,7 @@ export async function $onEmit(context: EmitContext<EmitterOptions>) {
 
       lines.push(`pub fn ${snakeName}_decode(r: &mut dyn SpecReader) -> Result<${m.name}, SCodecError> {`);
       for (const f of fields) {
-        const fSnake = toSnakeCase(f.name);
+        const fSnake = safeFieldName("rust", toSnakeCase(f.name));
         const rt = typeToRust(f.type);
         const boxed = needsBox(f.type, m.name);
         if (f.optional) {
@@ -217,7 +356,7 @@ export async function $onEmit(context: EmitContext<EmitterOptions>) {
       lines.push(`    while r.has_next_field()? {`);
       lines.push(`        match r.read_field_name()?.as_str() {`);
       for (const f of fields) {
-        const fSnake = toSnakeCase(f.name);
+        const fSnake = safeFieldName("rust", toSnakeCase(f.name));
         const boxed = needsBox(f.type, m.name);
         lines.push(`            "${f.name}" => { _${fSnake} = ${readExpr(f.type, f.optional, boxed)}; }`);
       }
@@ -225,7 +364,9 @@ export async function $onEmit(context: EmitContext<EmitterOptions>) {
       lines.push(`        }`);
       lines.push(`    }`);
       lines.push(`    r.end_object()?;`);
-      lines.push(`    Ok(${m.name} { ${fields.map(f => `${toSnakeCase(f.name)}: _${toSnakeCase(f.name)}`).join(", ")} })`);
+      lines.push(
+        `    Ok(${m.name} { ${fields.map((f) => `${toSnakeCase(f.name)}: _${toSnakeCase(f.name)}`).join(", ")} })`,
+      );
       lines.push(`}`);
       lines.push("");
 
@@ -234,6 +375,16 @@ export async function $onEmit(context: EmitContext<EmitterOptions>) {
       lines.push(`    encode: ${snakeName}_write,`);
       lines.push(`    decode: ${snakeName}_decode,`);
       lines.push(`};`);
+      lines.push("");
+    }
+
+    for (const e of svc.enums) {
+      lines.push(...generateEnumCode(e));
+      lines.push("");
+    }
+
+    for (const u of svc.unions) {
+      lines.push(...generateUnionCode(u));
       lines.push("");
     }
 
@@ -247,6 +398,9 @@ export async function $onEmit(context: EmitContext<EmitterOptions>) {
     modLines.push("// Generated by @specodec/typespec-emitter-rust. DO NOT EDIT.");
     for (const svc of services) {
       modLines.push(`pub mod ${dottedPathToSnakeCase(svc.serviceName)}_types;`);
+    }
+    for (const svc of services) {
+      modLines.push(`pub use ${dottedPathToSnakeCase(svc.serviceName)}_types::*;`);
     }
     modLines.push("");
     await emitFile(program, { path: `${outputDir}/mod.rs`, content: modLines.join("\n") });
