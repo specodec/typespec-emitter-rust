@@ -47,8 +47,8 @@ function typeToRust(t: Type): string {
   if (n === "float64" || n === "float" || n === "decimal") return "f64";
   if (n === "bytes") return "Vec<u8>";
   if (t.kind === "Enum") return "String";
-  if (isArrayType(t)) return `Vec<${typeToRust(arrayElementType(t))}>`;
-  if (isRecordType(t)) return `std::collections::HashMap<String, ${typeToRust(recordElementType(t))}>`;
+  if (isArrayType(t)) return `Vec<${typeToRust(arrayElementType(t)!)}>`;
+  if (isRecordType(t)) return `std::collections::HashMap<String, ${typeToRust(recordElementType(t)!)}>`;
   if (t.kind === "Model" && (t as Model).name) return (t as Model).name;
   if (t.kind === "Union" && (t as any).name) return (t as any).name;
   return "String";
@@ -72,11 +72,11 @@ function defaultFor(t: Type): string {
 function needsBox(fieldType: Type, structName: string): boolean {
   if (fieldType.kind === "Model" && (fieldType as Model).name === structName) return true;
   if (isArrayType(fieldType)) {
-    const elem = arrayElementType(fieldType);
+    const elem = arrayElementType(fieldType)!;
     if (elem.kind === "Model" && (elem as Model).name === structName) return true;
   }
   if (isRecordType(fieldType)) {
-    const elem = recordElementType(fieldType);
+    const elem = recordElementType(fieldType)!;
     if (elem.kind === "Model" && (elem as Model).name === structName) return true;
   }
   return false;
@@ -105,12 +105,12 @@ function writeExpr(t: Type, expr: string): string {
   if (n === "float64" || n === "float" || n === "decimal") return `w.write_float64(*${expr})`;
   if (n === "bytes") return `w.write_bytes(${expr})`;
   if (isArrayType(t)) {
-    const elem = arrayElementType(t);
+    const elem = arrayElementType(t)!;
     const lenExpr = expr.startsWith("&") ? expr.substring(1) : expr;
     return `w.begin_array(${lenExpr}.len()); for elem in ${expr} { w.next_element(); ${writeExpr(elem, "elem")} }; w.end_array()`;
   }
   if (isRecordType(t)) {
-    const elem = recordElementType(t);
+    const elem = recordElementType(t)!;
     const lenExpr = expr.startsWith("&") ? expr.substring(1) : expr;
     return `w.begin_object(${lenExpr}.len()); for (key, val) in ${expr} { w.write_field(key); ${writeExpr(elem, "val")} }; w.end_object()`;
   }
@@ -169,14 +169,14 @@ function readExpr(t: Type, optional?: boolean, boxed?: boolean): string {
       break;
     default:
       if (isArrayType(t)) {
-        const elem = arrayElementType(t);
+        const elem = arrayElementType(t)!;
         const rt = typeToRust(elem);
         const arrExpr = `{ let mut arr: Vec<${rt}> = Vec::new(); r.begin_array()?; while r.has_next_element()? { arr.push(${readExpr(elem, false, false)}); } r.end_array()?; arr }`;
         if (optional) return `Some(${arrExpr})`;
         return arrExpr;
       }
       if (isRecordType(t)) {
-        const elem = recordElementType(t);
+        const elem = recordElementType(t)!;
         const rt = typeToRust(elem);
         const mapExpr = `{ let mut map: std::collections::HashMap<String, ${rt}> = std::collections::HashMap::new(); r.begin_object()?; while r.has_next_field()? { let key = r.read_field_name()?; map.insert(key, ${readExpr(elem, false, false)}); } r.end_object()?; map }`;
         if (optional) return `Some(${mapExpr})`;

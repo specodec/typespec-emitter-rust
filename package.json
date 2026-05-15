@@ -1,6 +1,6 @@
 {
   "name": "@specodec/typespec-emitter-rust",
-  "version": "0.1.18",
+  "version": "0.1.19",
   "type": "module",
   "main": "dist/index.js",
   "typespec": {
@@ -30,7 +30,7 @@
     "@specodec/typespec-emitter-core": "^0.1.9"
   },
   "devDependencies": {
-    "@typespec/compiler": "1.11.0",
+    "@typespec/compiler": "^1.12.0",
     "@typespec/http": "1.11.0",
     "typescript": "^5.8.0"
   },
